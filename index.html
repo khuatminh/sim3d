@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Digital Twin — Mô phỏng văn phòng 3D</title>
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three/build/three.module.js",
+  "three/addons/": "./vendor/three/jsm/"
+} }
+</script>
+<style>
+  :root{
+    --bg:#070b16; --glass:rgba(14,20,38,.62); --line:rgba(255,255,255,.09);
+    --tx:#e8eefc; --mut:#8d9bbd; --acc:#5be7ff;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--tx);overflow:hidden}
+  #stage{position:fixed;inset:0}
+  #stage canvas{display:block}
+  #labels{position:fixed;inset:0;pointer-events:none;overflow:hidden}
+  .ui{position:fixed;inset:0;pointer-events:none}
+  .ui>*{pointer-events:auto}
+  .pill{display:inline-block;font-size:10px;margin-top:3px}.pill.on{color:#4ade80}.pill.off{color:#ff7a59}
+  .al{display:flex;align-items:center;gap:5px;color:#fff;font-size:10.5px;background:rgba(8,12,24,.72);padding:2px 8px 2px 6px;border-radius:999px;border:1px solid var(--c);white-space:nowrap;transform:translateY(-4px)}
+  .al i{font-style:normal}
+  body.far .al span{display:none}
+  body.far .al{padding:2px 5px}
+  /* resting agents: quieter labels so the people at work stand out */
+  .al.rest{font-size:9px;filter:saturate(.35) brightness(.85);border-style:dashed}
+  body.far .al.rest{display:none}
+
+  /* task control */
+  #isslist{max-height:210px;overflow:auto}
+  .iss{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:9px;font-size:11.5px;cursor:grab;border:1px solid transparent}
+  .iss:hover{background:rgba(255,255,255,.07);border-color:var(--line)}
+  .iss .sd{width:8px;height:8px;border-radius:50%;flex:none}
+  .iss b{font-weight:700;flex:none}
+  .iss .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#cdd7f2}
+  .iss .who{flex:none;font-size:9.5px;color:var(--mut);max-width:62px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  body.dragging #stage canvas{outline:3px dashed var(--acc);outline-offset:-6px}
+  #banner{position:absolute;left:50%;top:150px;transform:translateX(-50%);padding:10px 18px;font-size:13px;display:none;border-color:var(--acc)}
+  #banner.show{display:block}
+  #modalbg{position:fixed;inset:0;background:rgba(3,6,14,.55);display:none;place-items:center;z-index:20;pointer-events:auto}
+  #modalbg.show{display:grid}
+  #modalbox{width:min(520px,92vw);max-height:90vh;overflow:auto;padding:20px;background:rgba(14,20,38,.92)}
+  #modalbox h3{margin:0 0 4px;font-size:17px}
+  #modalbox .sub{color:var(--mut);font-size:12px;margin-bottom:12px}
+  #modalbox label{display:block;font-size:11px;color:var(--mut);margin:10px 0 0;text-transform:uppercase;letter-spacing:.6px}
+  #modalbox input,#modalbox select,#modalbox textarea{width:100%;margin-top:4px;background:rgba(255,255,255,.06);color:var(--tx);border:1px solid var(--line);border-radius:9px;padding:8px 10px;font:inherit;font-size:13px;text-transform:none;letter-spacing:0}
+  #modalbox select option{background:#10172a}
+  #modalbox .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  #modalbox .btns{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+  #modalbox .sec{border-top:1px solid var(--line);margin-top:14px;padding-top:2px}
+  #modalbox .inl{display:flex;gap:8px;align-items:flex-end}
+  #modalbox .inl label{flex:1}
+  #modalbox .err{color:#ff7a59;font-size:12px;margin-top:10px;min-height:14px}
+  #confirm{position:fixed;inset:0;background:rgba(3,6,14,.6);display:grid;place-items:center;z-index:30}
+  #confirm>div{width:min(440px,92vw);padding:20px;background:rgba(14,20,38,.96)}
+  #confirm p{margin:0 0 4px;font-size:14px;line-height:1.5}
+  #confirm small{color:var(--mut);font-size:11.5px}
+  button.danger{background:#ff7a59;color:#1a0a04;border-color:transparent;font-weight:700}
+  .glass{background:var(--glass);backdrop-filter:blur(14px) saturate(1.4);-webkit-backdrop-filter:blur(14px) saturate(1.4);
+    border:1px solid var(--line);border-radius:16px;box-shadow:0 10px 40px rgba(0,0,0,.35)}
+
+  /* header */
+  #top{position:absolute;left:16px;top:16px;display:flex;gap:12px;align-items:stretch}
+  #brand{padding:12px 16px;display:flex;flex-direction:column;justify-content:center;min-width:230px}
+  #brand b{font-size:15px;letter-spacing:.3px}
+  #brand span{font-size:11px;color:var(--mut);margin-top:2px}
+  #clock{padding:10px 18px;display:flex;align-items:center;gap:14px}
+  #clock .time{font-size:30px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:1px;line-height:1}
+  #clock .meta{font-size:11px;color:var(--mut);line-height:1.5}
+  #clock .ico{font-size:24px}
+  #speed{display:flex;gap:4px;margin-left:6px}
+  button{font:inherit;color:var(--tx);background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:9px;
+    padding:6px 10px;font-size:12px;cursor:pointer;transition:.15s}
+  button:hover{background:rgba(255,255,255,.14)}
+  button.on{background:var(--acc);color:#04202a;border-color:transparent;font-weight:700}
+
+  /* stats */
+  #stats{position:absolute;left:50%;top:92px;transform:translateX(-50%);display:flex;gap:2px;padding:6px}
+  .stat{padding:6px 16px;text-align:center;min-width:86px}
+  .stat b{display:block;font-size:22px;font-variant-numeric:tabular-nums}
+  .stat span{font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.8px}
+  .stat i{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px}
+
+  /* departments */
+  #depts{position:absolute;left:16px;top:96px;bottom:200px;width:258px;padding:10px;overflow:auto}
+  #depts h4,#panel h4,#log h4{margin:4px 6px 8px;font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--mut);font-weight:600}
+  .dept{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:11px;cursor:pointer;border:1px solid transparent;transition:.15s}
+  .dept:hover{background:rgba(255,255,255,.06)}
+  .dept.sel{background:rgba(255,255,255,.1);border-color:var(--c)}
+  .dept .dot{width:10px;height:10px;border-radius:3px;background:var(--c);box-shadow:0 0 12px var(--c);flex:none}
+  .dept .nm{flex:1;font-size:13px}
+  .dept .nm small{display:block;color:var(--mut);font-size:10px}
+  .dept .ct{font-size:12px;font-variant-numeric:tabular-nums;color:var(--mut)}
+  .dept .bar{height:3px;border-radius:2px;background:rgba(255,255,255,.08);margin-top:5px;overflow:hidden}
+  .dept .bar i{display:block;height:100%;background:var(--c);width:0;transition:width .4s}
+
+  /* log */
+  #log{position:absolute;left:16px;bottom:16px;width:258px;height:176px;padding:10px;overflow:hidden}
+  #log ul{list-style:none;margin:0;padding:0;font-size:11.5px;line-height:1.45}
+  #log li{padding:3px 6px;border-left:2px solid var(--c,#5be7ff);margin-bottom:3px;color:#cdd7f2;animation:in .4s}
+  #log li time{color:var(--mut);margin-right:6px;font-variant-numeric:tabular-nums}
+  @keyframes in{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:none}}
+
+  /* right panel */
+  #panel{position:absolute;right:16px;top:16px;width:290px;padding:14px;display:none}
+  #panel.show{display:block;animation:in .3s}
+  #panel .hd{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  #panel .hd .sw{width:34px;height:34px;border-radius:10px;background:var(--c);box-shadow:0 0 18px var(--c)}
+  #panel .hd b{font-size:16px;display:block}
+  #panel .hd small{color:var(--mut)}
+  #panel .x{margin-left:auto}
+  .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+  .kpi{background:rgba(255,255,255,.05);border-radius:10px;padding:8px;text-align:center}
+  .kpi b{font-size:18px;display:block;font-variant-numeric:tabular-nums}
+  .kpi span{font-size:9.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.6px}
+  .people{max-height:340px;overflow:auto;display:flex;flex-direction:column;gap:3px}
+  .pp{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:9px;font-size:12px;cursor:pointer}
+  .pp:hover{background:rgba(255,255,255,.07)}
+  .pp .av{width:24px;height:24px;border-radius:50%;background:var(--c);display:grid;place-items:center;font-size:10px;font-weight:700;color:#071018;flex:none}
+  .pp .st{margin-left:auto;font-size:10px;color:var(--mut);text-align:right}
+  .row{display:flex;justify-content:space-between;font-size:12px;padding:5px 0;border-bottom:1px solid var(--line);color:#cdd7f2}
+  .row span:first-child{color:var(--mut)}
+
+  /* bottom right controls */
+  #cams{position:absolute;right:16px;bottom:16px;display:flex;gap:6px;padding:8px;flex-wrap:wrap;justify-content:flex-end;max-width:420px}
+  #hint{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);font-size:11px;color:var(--mut);padding:8px 14px;white-space:nowrap}
+  kbd{background:rgba(255,255,255,.1);border-radius:4px;padding:1px 6px;font-size:10px;color:var(--tx)}
+
+  /* 3D labels */
+  .zl{transform:translateY(-6px);text-align:center;color:#fff;font-size:12px;font-weight:700;letter-spacing:.4px;
+    background:rgba(8,12,24,.62);border:1px solid var(--c);border-radius:999px;padding:4px 12px;white-space:nowrap;
+    box-shadow:0 0 18px color-mix(in srgb,var(--c) 55%,transparent);backdrop-filter:blur(6px)}
+  .zl span{margin-left:8px;color:var(--c);font-variant-numeric:tabular-nums}
+  .zl.hot{background:var(--c);color:#06101a}
+  .zl.hot span{color:#06101a}
+  .nl{color:#fff;font-size:10.5px;background:rgba(8,12,24,.75);padding:2px 7px;border-radius:6px;border:1px solid var(--line);white-space:nowrap}
+  .logo{font-weight:800;font-size:20px;letter-spacing:5px;color:#fff;text-shadow:0 0 14px #5be7ff,0 0 34px #5be7ff;white-space:nowrap}
+  .logo small{display:block;text-align:center;font-size:10px;letter-spacing:3px;color:#9fe9ff;font-weight:500;text-shadow:none}
+
+
+  /* agent chat (issue comments) */
+  #chat{position:absolute;right:16px;bottom:76px;width:320px;height:min(46vh,420px);padding:10px;display:flex;flex-direction:column}
+  #chat h4{margin:4px 6px 8px;font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--mut);font-weight:600;display:flex;align-items:center;gap:6px}
+  #chat h4 button{margin-left:auto;font-size:10px;padding:2px 8px}
+  #chat.min{height:auto}
+  #chat.min ul{display:none}
+  body:has(#panel.show) #chat{height:min(28vh,260px)}
+  #chat ul{list-style:none;margin:0;padding:0 2px 0 0;overflow:auto;flex:1;display:flex;flex-direction:column;gap:6px}
+  #chat li{padding:6px 8px;border-left:3px solid var(--c,#5be7ff);border-radius:0 9px 9px 0;background:rgba(255,255,255,.04);cursor:pointer;animation:in .4s}
+  #chat li:hover{background:rgba(255,255,255,.09)}
+  #chat li .ch{display:flex;gap:6px;align-items:baseline;font-size:11px}
+  #chat li .ch b{color:var(--c)}
+  #chat li .ch span{color:var(--mut)}
+  #chat li .ch time{margin-left:auto;color:var(--mut);font-variant-numeric:tabular-nums}
+  #chat li p{margin:3px 0 0;font-size:11.5px;line-height:1.45;color:#dbe3f7;word-break:break-word}
+  #chat .empty{color:var(--mut);font-size:12px;padding:6px}
+  .bub{pointer-events:none}
+  .bub>div{max-width:230px;width:max-content;font-size:11px;line-height:1.4;color:#0b1220;background:rgba(255,255,255,.95);
+    border-left:3px solid var(--c,#5be7ff);border-radius:10px;padding:6px 9px;box-shadow:0 6px 22px rgba(0,0,0,.35);
+    opacity:0;transform:translateY(8px) scale(.9);transition:opacity .35s,transform .35s;position:relative}
+  .bub>div::after{content:'';position:absolute;left:50%;bottom:-6px;margin-left:-6px;border:6px solid transparent;border-bottom:0;border-top-color:rgba(255,255,255,.95)}
+  .bub.show>div{opacity:1;transform:none}
+  body.far .bub>div{font-size:10px;max-width:170px}
+  @media (max-width:1000px){#chat{display:none}}
+
+  #loading{position:fixed;inset:0;display:grid;place-items:center;background:var(--bg);z-index:9;transition:opacity .8s;font-size:13px;color:var(--mut);letter-spacing:2px}
+  #loading.off{opacity:0;pointer-events:none}
+  @media (max-width:1000px){#depts,#log,#hint,#stats{display:none}}
+</style>
+</head>
+<body>
+<div id="loading">ĐANG DỰNG VĂN PHÒNG…</div>
+<div id="stage"></div>
+<div id="labels"></div>
+
+<div class="ui">
+  <div id="top">
+    <div id="brand" class="glass"><b id="brandName">HQ</b><span id="company">Digital Twin · Paperclip</span><span id="conn" class="pill off">● Đang kết nối…</span></div>
+    <div id="clock" class="glass">
+      <div class="ico" id="skyico">☀️</div>
+      <div><div class="time" id="time">08:00</div><div class="meta" id="date">Thứ Hai · Ngày 1</div></div>
+      <div id="speed">
+        <button data-mode="live" class="on" title="Dữ liệu trực tiếp từ Paperclip">● Live</button>
+        <button data-mode="replay" title="Phát lại lịch sử các lượt chạy">⏪ Phát lại</button>
+        <button id="daybtn" title="Ngày/đêm: tự động theo giờ máy">🌓 Auto</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="stats" class="glass">
+    <div class="stat"><b id="s-total">0</b><span><i style="background:#5be7ff"></i>Agent</span></div>
+    <div class="stat"><b id="s-run">0</b><span><i style="background:#4ade80"></i>Đang chạy</span></div>
+    <div class="stat"><b id="s-block">0</b><span><i style="background:#ff7a59"></i>Bị chặn</span></div>
+    <div class="stat"><b id="s-idle">0</b><span><i style="background:#8d9bbd"></i>Đang nghỉ</span></div>
+    <div class="stat"><b id="s-issue">0</b><span><i style="background:#ffc24b"></i>Issue mở</span></div>
+  </div>
+
+  <div id="depts" class="glass"><h4>Dự án</h4><div id="projlist"></div><h4 style="margin-top:14px">Issue · kéo thả lên agent để giao việc</h4><div id="isslist"></div><h4 style="margin-top:14px">Phòng ban</h4><div id="dlist"></div></div>
+  <div id="log" class="glass"><h4>Hoạt động Paperclip</h4><ul id="loglist"></ul></div>
+
+  <div id="chat" class="glass"><h4>💬 Trao đổi giữa các agent <button id="chatmin">Thu gọn</button></h4><ul id="chatlist"><li class="empty" style="border:0;background:none;cursor:default">Đang tải bình luận…</li></ul></div>
+  <div id="panel" class="glass"></div>
+  <div id="banner" class="glass"></div>
+  <div id="modalbg"><div id="modalbox" class="glass"></div></div>
+
+  <div id="cams" class="glass">
+    <button data-cam="iso" class="on">Toàn cảnh</button>
+    <button data-cam="top">Từ trên xuống</button>
+    <button data-cam="low">Góc thấp</button>
+    <button id="newtask" class="on">＋ Giao việc</button>
+    <button id="tour">▶ Tour tự động</button>
+    <button id="rot">⟲ Xoay</button>
+    <button id="fxbtn" class="on">✨ Bloom</button>
+  </div>
+  <div id="hint" class="glass">Kéo để xoay · Cuộn để zoom · Click phòng ban / agent</div>
+</div>
+
+<script type="module" src="./main.js"></script>
+</body>
+</html>
